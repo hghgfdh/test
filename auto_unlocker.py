@@ -6,7 +6,7 @@ import urllib3
 import json
 
 # --- Constants ---
-cookie = "your_cookie_here"  # Replace with your _new_bbs_serviceToken value
+cookie = "hcKe4%2BSqznQxtNhwIG1GiAOmFdJx8rdIBIsEVuytMIkd5JocLipAs41kmi0fD%2FFpEHn0kgGZbpaOFTPUIsftLbIePPwNns2CAXi2pThzaQ55VQhyTOjbJz%2BftqpNxtNNR52uwfB%2FBU376YHWdT2JObAQIB5H4hN%2ByZF2zq0XkqE%3D"  # Replace with your _new_bbs_serviceToken value
 feed_time_shift = 1400  # 1.4 seconds before midnight (adjust if needed)
 
 # --- Colors (optional, for readability) ---
