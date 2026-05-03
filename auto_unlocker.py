@@ -7,7 +7,7 @@ import json
 import os
 
 # --- Configuration ---
-target = "59:59"  # Target time in "MM:SS" format (e.g., "59:59")
+target = "00:59"  # Target time in "MM:SS" format (e.g., "59:59")
 cookie = os.getenv("COOKIE_VALUE", "your_cookie_here")  # Read from environment variable or fallback
 request_interval = 10  # Send a request every 10 seconds
 
