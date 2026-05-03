@@ -4,12 +4,12 @@ import time
 from datetime import datetime
 import urllib3
 import json
+import os
 
-# --- Constants ---
-cookie = "hcKe4%2BSqznQxtNhwIG1GiAOmFdJx8rdIBIsEVuytMIkd5JocLipAs41kmi0fD%2FFpEHn0kgGZbpaOFTPUIsftLbIePPwNns2CAXi2pThzaQ55VQhyTOjbJz%2BftqpNxtNNR52uwfB%2FBU376YHWdT2JObAQIB5H4hN%2ByZF2zq0XkqE%3D"  # Replace with your _new_bbs_serviceToken value
-feed_time_shift = 1400  # 1.4 seconds before midnight (adjust if needed)
-
-# --- Colors (optional, for readability) ---
+# --- Configuration ---
+target = "56:59"  # Target time in "MM:SS" format (e.g., "59:59" for 1 minute before the hour)
+cookie = os.getenv("COOKIE_VALUE", "hcKe4%2BSqznQxtNhwIG1GiAOmFdJx8rdIBIsEVuytMIkd5JocLipAs41kmi0fD%2FFpEHn0kgGZbpaOFTPUIsftLbIePPwNns2CAXi2pThzaQ55VQhyTOjbJz%2BftqpNxtNNR52uwfB%2FBU376YHWdT2JObAQIB5H4hN%2ByZF2zq0XkqE%3D")  # Read from environment variable or fallba
+# --- Colors (optional) ---
 class Colors:
     GREEN = "\033[92m"
     BLUE = "\033[94m"
@@ -28,26 +28,18 @@ def generate_device_id():
     device_id = hashlib.sha1(random_data.encode('utf-8')).hexdigest().upper()
     return device_id
 
-# --- Time Logic (Local Time Only) ---
-def wait_until_midnight():
-    now = datetime.now()
-    target_time = now.replace(hour=23, minute=59, second=59, microsecond=0)  # 23:59:59 (last second before midnight)
-    time_diff = (target_time - now).total_seconds()
-
-    if time_diff <= 0:
-        print(col_y + "[Info]: It's already past 23:59:59. Waiting for next midnight..." + Colors.RESET)
-        target_time = now.replace(hour=23, minute=59, second=59, microsecond=0) + timedelta(days=1)
-        time_diff = (target_time - now).total_seconds()
-
-    print(col_g + f"[Waiting until]: {target_time.strftime('%H:%M:%S')}" + Colors.RESET)
+# --- Time Logic: Wait Until Target Minute:Second ---
+def wait_until_target():
+    target_min, target_sec = map(int, target.split(":"))
+    print(col_g + f"[Target Time]: Waiting for minute={target_min}, second={target_sec}..." + Colors.RESET)
     print("Do not exit the script.")
 
     while True:
         now = datetime.now()
-        if now >= target_time:
-            print(col_g + f"[Time reached]: {now.strftime('%H:%M:%S')}. Starting requests..." + Colors.RESET)
+        if now.minute == target_min and now.second == target_sec:
+            print(col_g + f"[Time Reached]: {now.strftime('%H:%M:%S')}. Starting requests..." + Colors.RESET)
             break
-        time.sleep(1)
+        time.sleep(0.5)  # Check every 0.5 seconds to avoid high CPU usage
 
 # --- Account Status Check ---
 def check_unlock_status(session, cookie_value, device_id):
@@ -66,7 +58,7 @@ def check_unlock_status(session, cookie_value, device_id):
         response.release_conn()
 
         if response_data.get("code") == 100004:
-            print(f"[Error] Expired Cookie. Update the `cookie` variable.")
+            print(f"[Error] Expired Cookie. Update the `cookie` variable or COOKIE_VALUE secret.")
             exit()
 
         data = response_data.get("data", {})
@@ -146,7 +138,7 @@ def main():
     session = HTTP11Session()
 
     if check_unlock_status(session, cookie, device_id):
-        wait_until_midnight()
+        wait_until_target()
 
         url = "https://sgp-api.buy.mi.com/bbs/api/global/apply/bl-auth"
         headers = {
