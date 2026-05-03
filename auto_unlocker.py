@@ -7,8 +7,10 @@ import json
 import os
 
 # --- Configuration ---
-target = "56:59"  # Target time in "MM:SS" format (e.g., "59:59" for 1 minute before the hour)
-cookie = os.getenv("COOKIE_VALUE", "hcKe4%2BSqznQxtNhwIG1GiAOmFdJx8rdIBIsEVuytMIkd5JocLipAs41kmi0fD%2FFpEHn0kgGZbpaOFTPUIsftLbIePPwNns2CAXi2pThzaQ55VQhyTOjbJz%2BftqpNxtNNR52uwfB%2FBU376YHWdT2JObAQIB5H4hN%2ByZF2zq0XkqE%3D")  # Read from environment variable or fallba
+target = "59:59"  # Target time in "MM:SS" format (e.g., "59:59")
+cookie = os.getenv("COOKIE_VALUE", "your_cookie_here")  # Read from environment variable or fallback
+request_interval = 10  # Send a request every 10 seconds
+
 # --- Colors (optional) ---
 class Colors:
     GREEN = "\033[92m"
@@ -39,7 +41,7 @@ def wait_until_target():
         if now.minute == target_min and now.second == target_sec:
             print(col_g + f"[Time Reached]: {now.strftime('%H:%M:%S')}. Starting requests..." + Colors.RESET)
             break
-        time.sleep(0.5)  # Check every 0.5 seconds to avoid high CPU usage
+        time.sleep(0.5)  # Check every 0.5 seconds
 
 # --- Account Status Check ---
 def check_unlock_status(session, cookie_value, device_id):
@@ -152,6 +154,8 @@ def main():
 
                 response = session.make_request('POST', url, headers=headers)
                 if response is None:
+                    print(col_r + "[Error]: Request failed. Retrying in 10 seconds..." + Colors.RESET)
+                    time.sleep(request_interval)
                     continue
 
                 response_time = datetime.now()
@@ -196,7 +200,9 @@ def main():
                     print(col_g + f"[Server Response]: {response_data}" + Colors.RESET)
                 except Exception as e:
                     print(col_g + f"[Error processing response]: {e}" + Colors.RESET)
-                    continue
+
+                # Wait for the next request (10 seconds)
+                time.sleep(request_interval)
 
         except Exception as e:
             print(col_g + f"[Request Error]: {e}" + Colors.RESET)
