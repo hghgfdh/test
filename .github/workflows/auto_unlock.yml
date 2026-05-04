@@ -1,9 +1,7 @@
 name: Auto HyperOS Unlocker
 
 on:
-  push:
-    paths:
-      - 'cookie.txt'  # Trigger workflow only if cookie.txt is edited
+  push:  # Trigger on ANY push to ANY branch
   workflow_dispatch:  # Allow manual triggering from GitHub UI
 
 jobs:
@@ -23,14 +21,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install urllib3 colorama
 
-      - name: Read cookie from file
-        id: read_cookie
+      - name: Create cookies.txt (if not exists)
         run: |
-          COOKIE=$(cat cookie.txt)
-          echo "cookie=$COOKIE" >> $GITHUB_OUTPUT
+          # Create an empty cookies.txt if it doesn't exist
+          touch cookies.txt
+          # Optionally, you can add a placeholder cookie (replace with real ones)
+          echo "# Add one _new_bbs_serviceToken per line" > cookies.txt
 
       - name: Run the unlocker script
         run: |
           python auto_unlocker.py
         env:
-          COOKIE_VALUE: ${{ steps.read_cookie.outputs.cookie }}
+          # Optional: Override target time via environment variable
+          TARGET_TIME: "59:59"
