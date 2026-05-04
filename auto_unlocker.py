@@ -8,11 +8,11 @@ import json
 import os
 
 # --- Configuration ---
-target = "19:59"  # Target time in "MM:SS" format
+target = "21:59"  # Target time in "MM:SS" format
 cookie_file = "cookies.txt"  # File with one cookie per line
 feed_time_shift = 14000  # Start 1400ms before target
 request_interval = 1000  # 1000ms between requests
-stop_after = 2500  # Stop 2500ms after target
+stop_after = 9000  # Stop 2500ms after target
 request_timeout = 5  # Timeout for individual requests (seconds)
 
 # --- Colors (optional) ---
