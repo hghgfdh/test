@@ -2,7 +2,7 @@ import hashlib
 import random
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib3
 import json
 import os
@@ -21,16 +21,18 @@ class Colors:
     BLUE = "\033[94m"
     YELLOW = "\033[93m"
     RED = "\033[91m"
+    CYAN = "\033[96m"
     RESET = "\033[0m"
 
 col_g = Colors.GREEN
 col_b = Colors.BLUE
 col_y = Colors.YELLOW
 col_r = Colors.RED
+col_c = Colors.CYAN
 
 # --- Global Variables ---
 valid_cookies = []  # Stores valid cookies
-results = {}  # Stores results for each cookie
+results = {}  # Stores results for each request
 lock = threading.Lock()  # Thread-safe lock for results
 
 # --- Device ID Generation ---
@@ -42,7 +44,7 @@ def generate_device_id():
 def read_cookies():
     try:
         with open(cookie_file, "r") as f:
-            cookies = [line.strip() for line in f if line.strip()]
+            cookies = [line.strip() for line in f if line.strip() and not line.startswith("#")]
         return cookies
     except FileNotFoundError:
         print(col_r + f"[Error]: File '{cookie_file}' not found." + Colors.RESET)
@@ -69,16 +71,36 @@ def check_cookie_status(session, cookie_value):
         data = response_data.get("data", {})
         is_pass = data.get("is_pass")
         button_state = data.get("button_state")
+        deadline_format = data.get("deadline_format", "N/A")
 
         if is_pass == 4 and button_state == 1:
             return True, "Ready"
         elif is_pass == 1:
-            return False, "Already approved"
+            return False, f"Already approved (until {deadline_format})"
+        elif button_state == 2:
+            return False, f"Blocked until {deadline_format}"
+        elif button_state == 3:
+            return False, "Account <30 days old"
         else:
-            return False, f"Blocked (state: {is_pass}, button: {button_state})"
+            return False, f"Unknown state (is_pass={is_pass}, button_state={button_state})"
 
     except Exception as e:
         return False, f"Error: {str(e)}"
+
+# --- Print Cookie Statuses ---
+def print_cookie_statuses(cookies, valid_cookies, statuses):
+    print("\n" + col_c + "=== Cookie Status Summary ===" + Colors.RESET)
+    print(f"{col_y}[Total Cookies Detected]: {len(cookies)}{Colors.RESET}")
+    print(f"{col_g}[Valid Cookies]: {len(valid_cookies)}{Colors.RESET}")
+    print(f"{col_r}[Invalid Cookies]: {len(cookies) - len(valid_cookies)}{Colors.RESET}\n")
+
+    print(col_b + "--- Individual Cookie Statuses ---" + Colors.RESET)
+    for i, (cookie, status) in enumerate(zip(cookies, statuses), 1):
+        short_cookie = f"{cookie[:10]}..." if len(cookie) > 10 else cookie
+        is_valid = "✅" if cookie in valid_cookies else "❌"
+        print(f"{i}. {is_valid} {short_cookie}: {status}")
+
+    print()
 
 # --- HTTP Session ---
 class HTTP11Session:
@@ -138,14 +160,16 @@ def send_request(session, cookie_value, request_time):
                     "time": request_time.strftime('%H:%M:%S'),
                     "device_id": device_id,
                     "code": code,
-                    "data": data
+                    "data": data,
+                    "status": "Success"
                 }
     except Exception as e:
         with lock:
             results[cookie_value] = {
                 "time": request_time.strftime('%H:%M:%S'),
                 "device_id": device_id,
-                "error": str(e)
+                "error": str(e),
+                "status": "Failed"
             }
 
 # --- Time Logic ---
@@ -185,15 +209,28 @@ def main_loop(session):
 
 # --- Print Results ---
 def print_results():
-    print("\n" + col_y + "=== Results ===" + Colors.RESET)
-    for cookie, result in results.items():
-        status = result.get("code", result.get("error", "Unknown"))
+    print("\n" + col_c + "=== Request Results ===" + Colors.RESET)
+    if not results:
+        print(col_y + "[No results to display]" + Colors.RESET)
+        return
+
+    for i, (cookie, result) in enumerate(results.items(), 1):
+        short_cookie = f"{cookie[:10]}..." if len(cookie) > 10 else cookie
+        status = result.get("status", "Unknown")
+        time_sent = result.get("time", "N/A")
+        device_id = result.get("device_id", "N/A")[:8] + "..."
+        code = result.get("code", "N/A")
+        error = result.get("error", "None")
+
         print(
-            f"{col_g}[Cookie]: {cookie[:10]}...{Colors.RESET} "
-            f"{col_b}[Time]: {result['time']}{Colors.RESET} "
-            f"{col_b}[Device ID]: {result['device_id'][:8]}...{Colors.RESET} "
-            f"{col_y}[Status]: {status}{Colors.RESET}"
+            f"{i}. {col_b}[Cookie]: {short_cookie}{Colors.RESET} "
+            f"{col_g}[Time]: {time_sent}{Colors.RESET} "
+            f"{col_y}[Device ID]: {device_id}{Colors.RESET} "
+            f"{col_c}[Status]: {status}{Colors.RESET} "
+            f"{col_y}[Code]: {code}{Colors.RESET}"
         )
+        if error != "None":
+            print(f"   {col_r}[Error]: {error}{Colors.RESET}")
 
 # --- Main Function ---
 def main():
@@ -209,18 +246,20 @@ def main():
     session = HTTP11Session()
 
     # Check all cookies
-    print(col_y + "[Checking Cookies...]" + Colors.RESET)
+    print(col_y + "[Checking Cookie Statuses...]" + Colors.RESET)
+    statuses = []
     for cookie in cookies:
         is_valid, status = check_cookie_status(session, cookie)
-        print(f"{col_g if is_valid else col_r}[{cookie[:10]}...]: {status}{Colors.RESET}")
+        statuses.append(status)
         if is_valid:
             valid_cookies.append(cookie)
 
-    if not valid_cookies:
-        print(col_r + "[Error]: No valid cookies found." + Colors.RESET)
-        exit()
+    # Print cookie statuses
+    print_cookie_statuses(cookies, valid_cookies, statuses)
 
-    print(col_g + f"\n[Valid Cookies]: {len(valid_cookies)}" + Colors.RESET)
+    if not valid_cookies:
+        print(col_r + "[Error]: No valid cookies found. Exiting." + Colors.RESET)
+        exit()
 
     # Wait until feed_time_shift before target
     wait_until_feed_time()
@@ -228,12 +267,11 @@ def main():
     # Start main loop
     main_loop(session)
 
-    # Wait for all threads to finish (optional)
+    # Wait for all threads to finish
     time.sleep(1)
 
     # Print results
     print_results()
 
 if __name__ == "__main__":
-    from datetime import timedelta
     main()
