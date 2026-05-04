@@ -1,15 +1,19 @@
 import hashlib
 import random
 import time
+import threading
 from datetime import datetime
 import urllib3
 import json
 import os
 
 # --- Configuration ---
-target = "02:59"  # Target time in "MM:SS" format (e.g., "59:59")
-cookie = os.getenv("COOKIE_VALUE", "your_cookie_here")  # Read from environment variable or fallback
-request_interval = 10  # Send a request every 10 seconds
+target = "59:59"  # Target time in "MM:SS" format
+cookie_file = "cookies.txt"  # File with one cookie per line
+feed_time_shift = 1400  # Start 1400ms before target
+request_interval = 1000  # 1000ms between requests
+stop_after = 2500  # Stop 2500ms after target
+request_timeout = 5  # Timeout for individual requests (seconds)
 
 # --- Colors (optional) ---
 class Colors:
@@ -24,86 +28,65 @@ col_b = Colors.BLUE
 col_y = Colors.YELLOW
 col_r = Colors.RED
 
+# --- Global Variables ---
+valid_cookies = []  # Stores valid cookies
+results = {}  # Stores results for each cookie
+lock = threading.Lock()  # Thread-safe lock for results
+
 # --- Device ID Generation ---
 def generate_device_id():
-    random_data = f"{random.random()}-{time.time()}"
-    device_id = hashlib.sha1(random_data.encode('utf-8')).hexdigest().upper()
-    return device_id
+    random_data = f"{random.random()}-{time.time()}-{os.urandom(4).hex()}"
+    return hashlib.sha1(random_data.encode('utf-8')).hexdigest().upper()
 
-# --- Time Logic: Wait Until Target Minute:Second ---
-def wait_until_target():
-    target_min, target_sec = map(int, target.split(":"))
-    print(col_g + f"[Target Time]: Waiting for minute={target_min}, second={target_sec}..." + Colors.RESET)
-    print("Do not exit the script.")
+# --- Read Cookies from File ---
+def read_cookies():
+    try:
+        with open(cookie_file, "r") as f:
+            cookies = [line.strip() for line in f if line.strip()]
+        return cookies
+    except FileNotFoundError:
+        print(col_r + f"[Error]: File '{cookie_file}' not found." + Colors.RESET)
+        exit()
 
-    while True:
-        now = datetime.now()
-        if now.minute == target_min and now.second == target_sec:
-            print(col_g + f"[Time Reached]: {now.strftime('%H:%M:%S')}. Starting requests..." + Colors.RESET)
-            break
-        time.sleep(0.5)  # Check every 0.5 seconds
-
-# --- Account Status Check ---
-def check_unlock_status(session, cookie_value, device_id):
+# --- Check Cookie Status ---
+def check_cookie_status(session, cookie_value):
     try:
         url = "https://sgp-api.buy.mi.com/bbs/api/global/user/bl-switch/state"
+        device_id = generate_device_id()
         headers = {
             "Cookie": f"new_bbs_serviceToken={cookie_value};versionCode=500411;versionName=5.4.11;deviceId={device_id};"
         }
-
         response = session.make_request('GET', url, headers=headers)
         if response is None:
-            print(f"[Error] Could not retrieve unlock status.")
-            return False
+            return False, "Request failed"
 
         response_data = json.loads(response.data.decode('utf-8'))
         response.release_conn()
 
         if response_data.get("code") == 100004:
-            print(f"[Error] Expired Cookie. Update the `cookie` variable or COOKIE_VALUE secret.")
-            exit()
+            return False, "Expired cookie"
 
         data = response_data.get("data", {})
         is_pass = data.get("is_pass")
         button_state = data.get("button_state")
-        deadline_format = data.get("deadline_format", "")
 
-        if is_pass == 4:
-            if button_state == 1:
-                print(col_g + f"[Account Status]: Requests will be sent." + Colors.RESET)
-                return True
-            elif button_state == 2:
-                print(col_g + f"[Account Status]: Requests blocked until {deadline_format}." + Colors.RESET)
-                status_2 = input(f"Continue (" + col_b + f"Yes/No" + Colors.RESET + f")?: ")
-                if status_2.lower() in ['y', 'yes']:
-                    return True
-                else:
-                    exit()
-            elif button_state == 3:
-                print(col_g + f"[Account Status]: Account is less than 30 days old." + Colors.RESET)
-                status_3 = input(f"Continue (" + col_b + f"Yes/No" + Colors.RESET + f")?: ")
-                if status_3.lower() in ['y', 'yes']:
-                    return True
-                else:
-                    exit()
+        if is_pass == 4 and button_state == 1:
+            return True, "Ready"
         elif is_pass == 1:
-            print(col_g + f"[Account Status]: Request approved until {deadline_format}." + Colors.RESET)
-            input("Press Enter to exit...")
-            exit()
+            return False, "Already approved"
         else:
-            print(col_g + f"[Account Status]: Unknown state." + Colors.RESET)
-            exit()
+            return False, f"Blocked (state: {is_pass}, button: {button_state})"
+
     except Exception as e:
-        print(f"[Error at status checking] {e}")
-        return False
+        return False, f"Error: {str(e)}"
 
 # --- HTTP Session ---
 class HTTP11Session:
     def __init__(self):
         self.http = urllib3.PoolManager(
-            maxsize=10,
+            maxsize=20,
             retries=True,
-            timeout=urllib3.Timeout(connect=2.0, read=15.0),
+            timeout=urllib3.Timeout(connect=2.0, read=request_timeout),
             headers={}
         )
 
@@ -127,86 +110,130 @@ class HTTP11Session:
                 url,
                 headers=request_headers,
                 body=body,
-                preload_content=False
+                preload_content=False,
+                timeout=request_timeout
             )
             return response
         except Exception as e:
-            print(f"[Network Error] {e}")
             return None
+
+# --- Send Request (Non-blocking) ---
+def send_request(session, cookie_value, request_time):
+    device_id = generate_device_id()
+    url = "https://sgp-api.buy.mi.com/bbs/api/global/apply/bl-auth"
+    headers = {
+        "Cookie": f"new_bbs_serviceToken={cookie_value};versionCode=500411;versionName=5.4.11;deviceId={device_id};"
+    }
+
+    try:
+        response = session.make_request('POST', url, headers=headers)
+        if response:
+            response_data = json.loads(response.data.decode('utf-8'))
+            response.release_conn()
+            code = response_data.get("code")
+            data = response_data.get("data", {})
+
+            with lock:
+                results[cookie_value] = {
+                    "time": request_time.strftime('%H:%M:%S'),
+                    "device_id": device_id,
+                    "code": code,
+                    "data": data
+                }
+    except Exception as e:
+        with lock:
+            results[cookie_value] = {
+                "time": request_time.strftime('%H:%M:%S'),
+                "device_id": device_id,
+                "error": str(e)
+            }
+
+# --- Time Logic ---
+def wait_until_feed_time():
+    target_min, target_sec = map(int, target.split(":"))
+    while True:
+        now = datetime.now()
+        if now.minute == target_min and now.second == target_sec:
+            # Calculate feed_time_shift (1400ms before target)
+            feed_time = now - timedelta(milliseconds=feed_time_shift)
+            if now >= feed_time:
+                print(col_g + f"[Feed Time Reached]: Starting requests at {now.strftime('%H:%M:%S')}" + Colors.RESET)
+                return
+        time.sleep(0.1)
+
+# --- Main Loop ---
+def main_loop(session):
+    start_time = datetime.now()
+    target_min, target_sec = map(int, target.split(":"))
+    stop_time = start_time.replace(minute=target_min, second=target_sec) + timedelta(milliseconds=stop_after)
+
+    index = 0
+    while datetime.now() < stop_time:
+        if index >= len(valid_cookies):
+            index = 0  # Loop back to the first cookie
+
+        cookie = valid_cookies[index]
+        request_time = datetime.now()
+        threading.Thread(
+            target=send_request,
+            args=(session, cookie, request_time),
+            daemon=True
+        ).start()
+
+        index += 1
+        time.sleep(request_interval / 1000)  # Convert ms to seconds
+
+# --- Print Results ---
+def print_results():
+    print("\n" + col_y + "=== Results ===" + Colors.RESET)
+    for cookie, result in results.items():
+        status = result.get("code", result.get("error", "Unknown"))
+        print(
+            f"{col_g}[Cookie]: {cookie[:10]}...{Colors.RESET} "
+            f"{col_b}[Time]: {result['time']}{Colors.RESET} "
+            f"{col_b}[Device ID]: {result['device_id'][:8]}...{Colors.RESET} "
+            f"{col_y}[Status]: {status}{Colors.RESET}"
+        )
 
 # --- Main Function ---
 def main():
-    device_id = generate_device_id()
+    global valid_cookies
+
+    # Read cookies from file
+    cookies = read_cookies()
+    if not cookies:
+        print(col_r + "[Error]: No cookies found in file." + Colors.RESET)
+        exit()
+
+    # Initialize session
     session = HTTP11Session()
 
-    if check_unlock_status(session, cookie, device_id):
-        wait_until_target()
+    # Check all cookies
+    print(col_y + "[Checking Cookies...]" + Colors.RESET)
+    for cookie in cookies:
+        is_valid, status = check_cookie_status(session, cookie)
+        print(f"{col_g if is_valid else col_r}[{cookie[:10]}...]: {status}{Colors.RESET}")
+        if is_valid:
+            valid_cookies.append(cookie)
 
-        url = "https://sgp-api.buy.mi.com/bbs/api/global/apply/bl-auth"
-        headers = {
-            "Cookie": f"new_bbs_serviceToken={cookie};versionCode=500411;versionName=5.4.11;deviceId={device_id};"
-        }
+    if not valid_cookies:
+        print(col_r + "[Error]: No valid cookies found." + Colors.RESET)
+        exit()
 
-        try:
-            while True:
-                request_time = datetime.now()
-                print(col_g + f"[Request]: Sent at {request_time.strftime('%H:%M:%S')}" + Colors.RESET)
+    print(col_g + f"\n[Valid Cookies]: {len(valid_cookies)}" + Colors.RESET)
 
-                response = session.make_request('POST', url, headers=headers)
-                if response is None:
-                    print(col_r + "[Error]: Request failed. Retrying in 10 seconds..." + Colors.RESET)
-                    time.sleep(request_interval)
-                    continue
+    # Wait until feed_time_shift before target
+    wait_until_feed_time()
 
-                response_time = datetime.now()
-                print(col_g + f"[Response]: Received at {response_time.strftime('%H:%M:%S')}" + Colors.RESET)
+    # Start main loop
+    main_loop(session)
 
-                try:
-                    response_data = response.data
-                    response.release_conn()
-                    json_response = json.loads(response_data.decode('utf-8'))
-                    code = json_response.get("code")
-                    data = json_response.get("data", {})
+    # Wait for all threads to finish (optional)
+    time.sleep(1)
 
-                    if code == 0:
-                        apply_result = data.get("apply_result")
-                        if apply_result == 1:
-                            print(col_g + f"[Status]: Request approved. Checking status..." + Colors.RESET)
-                            check_unlock_status(session, cookie, device_id)
-                        elif apply_result == 3:
-                            deadline_format = data.get("deadline_format", "Not declared")
-                            print(col_g + f"[Status]: Quota reached. Retry at {deadline_format}." + Colors.RESET)
-                            exit()
-                        elif apply_result == 4:
-                            deadline_format = data.get("deadline_format", "Not declared")
-                            print(col_g + f"[Status]: Account blocked until {deadline_format}." + Colors.RESET)
-                            exit()
-                    elif code == 100001:
-                        print(col_g + f"[Status]: Request rejected." + Colors.RESET)
-                        print(col_g + f"[Response]: {json_response}" + Colors.RESET)
-                    elif code == 100003:
-                        print(col_g + f"[Status]: Possibly approved. Checking status..." + Colors.RESET)
-                        print(col_g + f"[Response]: {json_response}" + Colors.RESET)
-                        check_unlock_status(session, cookie, device_id)
-                    elif code is not None:
-                        print(col_g + f"[Status]: Unknown status: {code}" + Colors.RESET)
-                        print(col_g + f"[Response]: {json_response}" + Colors.RESET)
-                    else:
-                        print(col_g + f"[Error]: No status code in response." + Colors.RESET)
-                        print(col_g + f"[Response]: {json_response}" + Colors.RESET)
-
-                except json.JSONDecodeError:
-                    print(col_g + f"[Error]: JSON decode error." + Colors.RESET)
-                    print(col_g + f"[Server Response]: {response_data}" + Colors.RESET)
-                except Exception as e:
-                    print(col_g + f"[Error processing response]: {e}" + Colors.RESET)
-
-                # Wait for the next request (10 seconds)
-                time.sleep(request_interval)
-
-        except Exception as e:
-            print(col_g + f"[Request Error]: {e}" + Colors.RESET)
-            exit()
+    # Print results
+    print_results()
 
 if __name__ == "__main__":
+    from datetime import timedelta
     main()
