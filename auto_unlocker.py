@@ -42,13 +42,33 @@ def generate_device_id():
 
 # --- Read Cookies from File ---
 def read_cookies():
-    try:
-        with open(cookie_file, "r") as f:
-            cookies = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-        return cookies
-    except FileNotFoundError:
-        print(col_r + f"[Error]: File '{cookie_file}' not found." + Colors.RESET)
+    if not os.path.exists(cookie_file):
+        print(col_r + f"[Error]: File '{cookie_file}' does not exist in the current directory." + Colors.RESET)
+        print(col_y + f"[Info]: Current directory: {os.getcwd()}" + Colors.RESET)
+        print(col_y + f"[Info]: Expected file: {os.path.abspath(cookie_file)}" + Colors.RESET)
         exit()
+
+    with open(cookie_file, "r") as f:
+        lines = f.readlines()
+
+    total_lines = len(lines)
+    print(col_y + f"[File Info]: '{cookie_file}' exists with {total_lines} total lines." + Colors.RESET)
+
+    # Filter out empty lines and comments (lines starting with #)
+    cookies = []
+    for line in lines:
+        stripped_line = line.strip()
+        if stripped_line and not stripped_line.startswith("#"):
+            cookies.append(stripped_line)
+
+    num_cookies = len(cookies)
+    print(col_y + f"[File Info]: Loaded {num_cookies} cookies (ignored {total_lines - num_cookies} empty/comment lines)." + Colors.RESET)
+
+    if num_cookies == 0:
+        print(col_r + "[Error]: No valid cookies found in the file. Add one cookie per line (ignore lines starting with #)." + Colors.RESET)
+        exit()
+
+    return cookies
 
 # --- Check Cookie Status ---
 def check_cookie_status(session, cookie_value):
@@ -238,9 +258,6 @@ def main():
 
     # Read cookies from file
     cookies = read_cookies()
-    if not cookies:
-        print(col_r + "[Error]: No cookies found in file." + Colors.RESET)
-        exit()
 
     # Initialize session
     session = HTTP11Session()
