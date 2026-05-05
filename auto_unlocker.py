@@ -17,7 +17,7 @@ import os
 from queue import Queue
 
 # --- Configuration ---
-target = "53:29"  # Target time in "MM:SS" format
+target = "56:49"  # Target time in "MM:SS" format
 cookie_file = "cookies.txt"  # File with one cookie per line
 feed_time_shift = 1400  # Start 1400ms before target
 request_interval = 1000  # 1000ms between requests
